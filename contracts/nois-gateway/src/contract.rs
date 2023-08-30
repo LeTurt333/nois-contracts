@@ -347,7 +347,10 @@ pub fn ibc_packet_receive(
         match op {
             InPacket::RequestBeacon { after, origin } => {
                 receive_request_beacon(deps, env, channel_id, relayer, after, origin)
-            }
+            },
+            InPacket::RequestTimelock { after, origin, cipher } => {
+                todo!()
+            },
             InPacket::PullBeaconPrice {} => receive_pull_beacon_price(deps, env),
             _ => Err(ContractError::UnsupportedPacketType),
         }
@@ -361,6 +364,73 @@ pub fn ibc_packet_receive(
             .add_event(Event::new("ibc").add_attribute("packet", "receive")))
     })
 }
+
+fn receive_timelock_request_beacon(
+    mut deps: DepsMut,
+    env: Env,
+    channel_id: String,
+    relayer: Addr,
+    after: Timestamp,
+    origin: Binary,
+    cipher: String,
+) -> Result<IbcReceiveResponse, ContractError> {
+    validate_origin(&origin)?;
+
+    let router = RequestRouter::new();
+    let RoutingReceipt {
+        queued,
+        source_id,
+        acknowledgement,
+        mut msgs,
+    } = router.route(
+        deps.branch(),
+        &env,
+        channel_id.clone(),
+        after,
+        origin.clone(),
+    )?;
+
+    // Store request
+    requests_log_add(
+        deps.storage,
+        &channel_id,
+        &RequestLogEntry {
+            origin,
+            tx: (env.block.height, env.transaction.map(|ti| ti.index)),
+            source_id,
+            queued,
+        },
+    )?;
+
+    // Pay time
+    let mut customer = CUSTOMERS.load(deps.storage, &channel_id)?;
+    customer.requested_beacons += 1;
+    CUSTOMERS.save(deps.storage, &channel_id, &customer)?;
+
+    let config = CONFIG.load(deps.storage)?;
+
+    let Coin { amount, denom } = config.price;
+    let amount_burn = amount.mul_floor((50u128, 100)); // 50%
+    let amount_relayer = amount.mul_floor((5u128, 100)); // 5%
+    let amount_rest = amount - amount_burn - amount_relayer; // 45%
+
+    let msg = WasmMsg::Execute {
+        contract_addr: customer.payment.into(),
+        msg: to_binary(&nois_payment::msg::ExecuteMsg::Pay {
+            burn: Coin::new(amount_burn.u128(), &denom),
+            relayer: (relayer.into(), Coin::new(amount_relayer.u128(), &denom)),
+            community_pool: Coin::new(amount_rest.u128(), denom),
+        })?,
+        funds: vec![],
+    };
+    msgs.push(msg.into());
+
+    Ok(IbcReceiveResponse::new()
+        .set_ack(acknowledgement)
+        .add_messages(msgs)
+        .add_attribute("action", "receive_request_beacon"))
+}
+
 
 fn receive_request_beacon(
     mut deps: DepsMut,

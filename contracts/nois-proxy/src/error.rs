@@ -16,6 +16,9 @@ pub enum ContractError {
     #[error("Job ID exceeds length limit.")]
     JobIdTooLong,
 
+    #[error("Invalid Cipher message")]
+    InvalidCipher,
+
     #[error("The after value is too low (min_after: {min_after}, after: {after}).")]
     AfterTooLow {
         min_after: Timestamp,

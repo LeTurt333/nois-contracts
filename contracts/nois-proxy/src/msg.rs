@@ -38,6 +38,12 @@ pub enum ExecuteMsg {
         after: Timestamp,
         job_id: String,
     },
+    // KEEP IN SYNC WITH ProxyExecuteMsg::TimelockJobRequest
+    TimelockJobRequest {
+        cipher: String,
+        after: Timestamp,
+        job_id: String
+    },
     /// Set the config
     SetConfig {
         manager: Option<String>,
@@ -88,6 +94,9 @@ impl From<ProxyExecuteMsg> for ExecuteMsg {
             }
             ProxyExecuteMsg::GetRandomnessAfter { after, job_id } => {
                 ExecuteMsg::GetRandomnessAfter { after, job_id }
+            }
+            ProxyExecuteMsg::TimelockJobRequest { cipher, after, job_id } => {
+                ExecuteMsg::TimelockJobRequest { cipher, after, job_id }
             }
         }
     }

@@ -4,6 +4,19 @@ use crate::error::ContractError;
 use cosmwasm_std::Coin;
 use nois::MAX_JOB_ID_LEN;
 
+/// - Validates `cipher` doesn't exceed MAX_JOB_ID_LEN (can it be larger than that? Kind of a short message)
+/// - Validates `cipher` starts & ends with correct Age Armor header/footer
+pub fn validate_cipher(cipher: &str) -> Result<(), ContractError> {
+    // TODO: Is this needed due to gas limits / ibc limits?
+    validate_job_id(cipher)?;
+
+    if !cipher.starts_with("-----BEGIN AGE ENCRYPTED FILE-----") || !cipher.ends_with("-----END AGE ENCRYPTED FILE-----") {
+        return Err(ContractError::InvalidCipher);
+    }
+    
+    Ok(())
+}
+
 pub fn validate_job_id(job_id: &str) -> Result<(), ContractError> {
     if job_id.len() > MAX_JOB_ID_LEN {
         Err(ContractError::JobIdTooLong)

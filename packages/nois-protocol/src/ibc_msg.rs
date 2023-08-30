@@ -13,6 +13,14 @@ pub enum InPacket {
         /// The origin data set by the proxy in a proxy specific format.
         origin: Binary,
     },
+    RequestTimelock {
+        /// Beacon publish time must be > `after`
+        after: Timestamp,
+        /// The origin data set by the proxy in proxy specific format (sender/job_id)
+        origin: Binary,
+        /// The cipher text to be decrypted & sent back
+        cipher: String
+    },
     /// Requests the current price per beacon. This can change over time and potentially
     /// change per channel ID.
     /// The proxy can pull the beacon price but should also expect price updates to get pushed.
@@ -60,6 +68,15 @@ pub enum OutPacket {
         randomness: HexBinary,
         /// The origin data set by the proxy in a proxy specific format.
         origin: Binary,
+    },
+    DeliverTimelock {
+        source_id: String,
+        published: Timestamp,
+        origin: Binary,
+        // The original encrypted message
+        cipher: String,
+        // The decrypted message
+        plaintext: String
     },
     Welcome {
         /// Payment address on the Nois blockchain

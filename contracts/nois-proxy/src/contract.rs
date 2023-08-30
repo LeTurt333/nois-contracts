@@ -17,7 +17,7 @@ use crate::attributes::{
     ATTR_ACTION, ATTR_CALLBACK_ERROR_MSG, ATTR_CALLBACK_SUCCESS, EVENT_TYPE_CALLBACK,
 };
 use crate::error::ContractError;
-use crate::jobs::{validate_job_id, validate_payment};
+use crate::jobs::{validate_job_id, validate_payment, validate_cipher};
 use crate::msg::{
     AllowlistResponse, ConfigResponse, ExecuteMsg, GatewayChannelResponse, InstantiateMsg,
     IsAllowlistedResponse, PriceResponse, PricesResponse, QueryMsg, RequestBeaconOrigin, SudoMsg,
@@ -144,6 +144,9 @@ pub fn execute(
         ExecuteMsg::GetRandomnessAfter { after, job_id } => {
             execute_get_randomness_after(deps, env, info, after, job_id)
         }
+        ExecuteMsg::TimelockJobRequest { cipher, after, job_id } => {
+            execute_timelock_job_request(deps, env, info, cipher, after, job_id)
+        }
         ExecuteMsg::Withdraw {
             denom,
             amount,
@@ -199,6 +202,88 @@ fn execute_get_randomness_after(
         after,
         job_id,
     )
+}
+
+fn execute_timelock_job_request(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    cipher: String,
+    after: Timestamp,
+    job_id: String,
+) -> Result<Response, ContractError> {
+
+    // Same as normal request
+    let config = CONFIG.load(deps.storage)?;
+    validate_job_id(&job_id)?;
+    validate_payment(&config.prices, &info.funds)?;
+
+    // Validating the Cipher text
+    validate_cipher(&cipher)?;
+
+    // Same as normal request
+    let allowlist_enabled = config.allowlist_enabled.unwrap_or(false);
+    if allowlist_enabled && !ALLOWLIST.has(deps.storage, &info.sender) {
+        return Err(ContractError::SenderNotAllowed);
+    }
+    let min_after = config.min_after.unwrap_or(MIN_AFTER_FALLBACK);
+    if after < min_after {
+        return Err(ContractError::AfterTooLow { min_after, after });
+    }
+    let max_after = config.max_after.unwrap_or(MAX_AFTER_FALLBACK);
+    if after > max_after {
+        return Err(ContractError::AfterTooHigh { max_after, after });
+    }
+
+    // New InPacket type including cipher
+    let packet = InPacket::RequestTimelock { 
+        after, 
+        origin: to_binary(&RequestBeaconOrigin {
+            sender: info.sender.into(),
+            job_id
+        })?, 
+        cipher
+    };
+
+    // Same as normal request
+    let channel_id = get_gateway_channel(deps.storage)?;
+    let mut msgs: Vec<CosmosMsg> = Vec::with_capacity(2);
+    if let OperationalMode::IbcPay { unois_denom } = config.mode {
+        if let Some(payment_contract) = config.payment {
+            if !config.nois_beacon_price.is_zero() {
+                msgs.push(
+                    IbcMsg::Transfer {
+                        channel_id: unois_denom.ics20_channel,
+                        to_address: payment_contract,
+                        amount: Coin {
+                            amount: config.nois_beacon_price,
+                            denom: unois_denom.denom,
+                        },
+                        timeout: env.block.time.plus_seconds(TRANSFER_PACKET_LIFETIME).into(),
+                    }
+                    .into(),
+                );
+            }
+        }
+    }
+
+    msgs.push(
+        IbcMsg::SendPacket {
+            channel_id,
+            data: to_binary(&packet)?,
+            timeout: env
+                .block
+                .time
+                .plus_seconds(REQUEST_BEACON_PACKET_LIFETIME)
+                .into(),
+        }
+        .into(),
+    );
+
+    let res = Response::new()
+        .add_messages(msgs)
+        .add_attribute(ATTR_ACTION, "execute_timelock_job_request");
+    Ok(res)
 }
 
 pub fn execute_get_randomness_impl(
